@@ -123,5 +123,31 @@ This function accepts:
 
 The returned module is in `eval` mode with its PyTorch weights accessible via `.state_dict()`.
 
+## RoboTwin integration (fork addition)
+
+This fork adds `lewm_policy.py`, a thin MPC wrapper around `JEPA` used by
+the RoboTwin deploy shim at `RoboTwin/policy/LeWM/` in the parent repo.
+
+```python
+from lewm_policy import LeWMPolicy
+
+policy = LeWMPolicy(
+    ckpt_path="path/to/lewm_object.ckpt",   # full pickled JEPA (ModelObjectCallBack)
+    goal_image_path="path/to/goal.png",     # or use load_goal_for_seed(seed)
+    planning_horizon=5,
+    planning_iters=100,
+    history_size=3,
+    img_size=224,
+    action_dim=14,
+)
+policy.reset_obs()
+action = policy.get_action(obs)[0]   # 14-dim qpos for aloha-agilex
+```
+
+The wrapper depends only on `torch` + `numpy` + `PIL` plus the sibling
+`jepa.py` / `module.py` files — no `stable_worldmodel` /
+`stable_pretraining` runtime needed at inference. See the parent repo's
+README for the full RoboTwin reproduction recipe.
+
 ## Contact & Contributions
 Feel free to open [issues](https://github.com/lucas-maes/le-wm/issues)! For questions or collaborations, please contact `lucas.maes@mila.quebec`

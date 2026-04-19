@@ -1,0 +1,17 @@
+# RoboTwin native (preprocessed) -- LeWM-faithful action concat across frame_skip.
+# Pixels are already ImageNet-normalized inside RoboTwinDataset, so the train
+# script's image preprocessor is bypassed via `pixel_preprocessor: none`.
+
+pixel_preprocessor: none   # train.py reads this; "default" -> get_img_preprocessor
+
+dataset:
+  _target_: robotwin_dataset.RoboTwinDataset
+  data_root: /data/robotwin_hard_pretrain
+  num_steps: ${eval:'${wm.num_preds} + ${wm.history_size}'}
+  frameskip: 5
+  keys_to_load:
+    - pixels
+    - action
+  keys_to_cache:
+    - action
+  require_raw_actions: true

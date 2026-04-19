@@ -1,4 +1,7 @@
+pixel_preprocessor: default
+
 dataset:
+  _target_: stable_worldmodel.data.HDF5Dataset
   num_steps: ${eval:'${wm.num_preds} + ${wm.history_size}'}
   frameskip: 5
   name: pusht_expert_train

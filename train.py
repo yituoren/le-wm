@@ -7,6 +7,7 @@ import lightning as pl
 import stable_pretraining as spt
 import stable_worldmodel as swm
 import torch
+from hydra.utils import instantiate
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import OmegaConf, open_dict
 
@@ -51,9 +52,18 @@ def run(cfg):
     ##       dataset       ##
     #########################
 
-    dataset = swm.data.HDF5Dataset(**cfg.data.dataset, transform=None)
-    transforms = [get_img_preprocessor(source='pixels', target='pixels', img_size=cfg.img_size)]
-    
+    dataset = instantiate(cfg.data.dataset, transform=None)
+
+    # Some adapters (e.g. RoboTwinDataset) already return ImageNet-normalized
+    # float pixels; their data config sets `pixel_preprocessor: none` to skip
+    # the default ToImage+Resize so we don't re-normalize.
+    pixel_pp = cfg.data.get("pixel_preprocessor", "default")
+    transforms = []
+    if pixel_pp == "default":
+        transforms.append(get_img_preprocessor(source='pixels', target='pixels', img_size=cfg.img_size))
+    elif pixel_pp not in (None, "none"):
+        raise ValueError(f"unknown pixel_preprocessor: {pixel_pp!r}")
+
     with open_dict(cfg):
         for col in cfg.data.dataset.keys_to_load:
             if col.startswith("pixels"):
