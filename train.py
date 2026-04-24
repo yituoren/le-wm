@@ -167,18 +167,31 @@ def run(cfg):
     run_dir = Path(swm.data.utils.get_cache_dir(), run_id)
     weights_ckpt = run_dir / f"{cfg.output_model_name}_weights.ckpt"
 
-    # Decide warm-start before building the wandb logger: warm-start starts a
-    # brand-new optimizer/scheduler/epoch counter, so logging into the old
-    # wandb run would collide on step numbers. Suffix the wandb id/name so
-    # warm-start always goes to a fresh run.
+    # Decide warm-start / finetune before building the wandb logger: both
+    # start a brand-new optimizer/scheduler/epoch counter, so logging into the
+    # old wandb run would collide on step numbers. Suffix the wandb id/name so
+    # a fresh run is used.
     warm_start_epoch = cfg.get("warm_start_epoch", None)
+    finetune_from = cfg.get("finetune_from", None)
     is_warm_start = warm_start_epoch is not None and not weights_ckpt.exists()
-    if is_warm_start and cfg.wandb.enabled:
-        suffix = f"_warm{int(warm_start_epoch)}"
+    # `${oc.env:VAR,null}` usually resolves to Python None, but guard against
+    # the literal strings "null"/"none" too in case the interpolation is
+    # overridden on the CLI as a bare word.
+    is_finetune = (
+        finetune_from is not None
+        and str(finetune_from).strip().lower() not in ("", "null", "none")
+        and not weights_ckpt.exists()
+        and not is_warm_start  # warm_start takes precedence if both set
+    )
+    if (is_warm_start or is_finetune) and cfg.wandb.enabled:
+        suffix = (
+            f"_warm{int(warm_start_epoch)}" if is_warm_start else "_ft"
+        )
         with open_dict(cfg):
             cfg.wandb.config.id = f"{cfg.wandb.config.id}{suffix}"
             cfg.wandb.config.name = f"{cfg.wandb.config.name}{suffix}"
-        print(f"[warm-start] wandb id/name -> {cfg.wandb.config.id}")
+        tag = "warm-start" if is_warm_start else "finetune"
+        print(f"[{tag}] wandb id/name -> {cfg.wandb.config.id}")
 
     logger = None
     if cfg.wandb.enabled:
@@ -217,6 +230,25 @@ def run(cfg):
             print(f"[warm-start] missing keys ({len(missing)}): {missing[:8]}...")
         if unexpected:
             print(f"[warm-start] unexpected keys ({len(unexpected)}): {unexpected[:8]}...")
+
+    # Finetune: same weight-only load as warm_start, but source ckpt is an
+    # arbitrary external path (not constrained to live under run_dir). Used
+    # by run_finetune.sh to bootstrap each (task, split) run from the shared
+    # pretrained object ckpt. Optimizer / scheduler / epoch restart fresh.
+    if is_finetune:
+        ft_path = Path(os.path.expandvars(str(finetune_from))).expanduser()
+        if not ft_path.exists():
+            raise FileNotFoundError(f"finetune_from ckpt not found: {ft_path}")
+        saved = torch.load(str(ft_path), map_location="cpu", weights_only=False)
+        src_state = saved.state_dict() if hasattr(saved, "state_dict") else saved
+        missing, unexpected = world_model.model.load_state_dict(
+            src_state, strict=False
+        )
+        print(f"[finetune] loaded weights from {ft_path}")
+        if missing:
+            print(f"[finetune] missing keys ({len(missing)}): {missing[:8]}...")
+        if unexpected:
+            print(f"[finetune] unexpected keys ({len(unexpected)}): {unexpected[:8]}...")
 
     # Always pass ckpt_path: spt.Manager uses it as both the save target and
     # the resume source. Skipping it on fresh/warm-start runs means weights.ckpt

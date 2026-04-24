@@ -78,7 +78,12 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--planning-iters", type=int, default=100)
     p.add_argument("--history-size", type=int, default=3)
     p.add_argument("--img-size", type=int, default=224)
-    p.add_argument("--action-dim", type=int, default=14)
+    p.add_argument("--action-dim", type=int, default=14,
+                   help="Per-env-step action dim (qpos). Env receives this shape.")
+    p.add_argument("--frame-skip", type=int, default=4,
+                   help="Skip-chunk size the world model was trained with. "
+                        "MPC operates on (frame_skip * action_dim) chunks, and "
+                        "the best chunk is split into frame_skip per-step commands.")
     p.add_argument("--action-scale", type=float, default=1.0)
     return p.parse_args()
 
@@ -175,7 +180,8 @@ def _run_task(
           flush=True)
     print(f"[client] lewm_ckpt={ckpt_path}", flush=True)
     print(f"[client] mpc: horizon={args.planning_horizon} iters={args.planning_iters} "
-          f"hist={args.history_size} act_scale={args.action_scale}", flush=True)
+          f"hist={args.history_size} chunk={args.frame_skip}x{args.action_dim}="
+          f"{args.frame_skip * args.action_dim} act_scale={args.action_scale}", flush=True)
     if info.get("video_root"):
         print(f"[client] video_root={info['video_root']}", flush=True)
 
@@ -190,6 +196,7 @@ def _run_task(
         history_size=args.history_size,
         img_size=args.img_size,
         action_dim=args.action_dim,
+        frame_skip=args.frame_skip,
         action_scale=args.action_scale,
     )
 

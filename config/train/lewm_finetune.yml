@@ -1,0 +1,81 @@
+# LeWM finetune config: bootstraps a small-data per-task run from an
+# external pretrained object ckpt. Invoked by run_finetune.sh, which exports
+# FINETUNE_ROOT / FT_TASK / FT_SPLIT for the data config and passes
+# `finetune_from=<path>` / `subdir=<ft_task_N>` on the command line.
+defaults:
+  - _self_
+  - data: robotwin_finetune
+
+output_model_name: lewm_ft
+# run_finetune.sh overrides `subdir` per (task, split) so each run gets its
+# own cache dir. Default shape keeps single-run manual invocations workable.
+subdir: ${oc.env:FT_TASK,manual}_${oc.env:FT_SPLIT,manual}
+
+# Path to a pretrained `<name>_epoch_N_object.ckpt` produced by train.py.
+# Weights-only load (strict=False) — optimizer/scheduler/epoch restart.
+finetune_from: ${oc.env:FINETUNE_FROM,null}
+
+# Warm-start is mutually exclusive with finetune; kept null so train.py
+# doesn't preempt the finetune branch.
+warm_start_epoch: null
+
+num_workers: 6
+train_split: 0.9
+seed: 3072
+img_size: 224
+patch_size: 14
+encoder_scale: tiny
+dump_object: True
+
+trainer:
+  # Finetune is shorter than pretrain by design — small-data runs converge
+  # (or overfit) in tens of epochs; tune per observation.
+  max_epochs: 30
+  devices: auto
+  accelerator: gpu
+  precision: bf16
+  gradient_clip_val: 1.0
+
+loader:
+  batch_size: 64
+  num_workers: ${num_workers}
+  persistent_workers: True
+  prefetch_factor: 3
+  pin_memory: True
+
+optimizer:
+  type: AdamW
+  # Lower than pretrain (5e-5) because we start from a converged ckpt.
+  lr: 1e-5
+  weight_decay: 1e-3
+
+wandb:
+  enabled: True
+  config:
+    entity: lewm
+    project: lewm
+    name: ${output_model_name}_${subdir}
+    id: ${output_model_name}_${subdir}
+    resume: allow
+    log_model: False
+
+wm:
+  type: lewm
+  history_size: 3
+  num_preds: 1
+  embed_dim: 192
+
+predictor:
+  depth: 6
+  heads: 16
+  mlp_dim: 2048
+  dim_head: 64
+  dropout: 0.1
+  emb_dropout: 0.0
+
+loss:
+  sigreg:
+    weight: 0.09
+    kwargs:
+      knots: 17
+      num_proj: 1024

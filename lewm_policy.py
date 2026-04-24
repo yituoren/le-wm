@@ -55,6 +55,7 @@ class LeWMPolicy:
         history_size: int = 3,
         img_size: int = 224,
         action_dim: int = 14,
+        frame_skip: int = 4,
         action_scale: float = 1.0,
     ):
         self.device = torch.device(device) if not isinstance(device, torch.device) else device
@@ -68,9 +69,11 @@ class LeWMPolicy:
         self.history_size = int(history_size)
         self.img_size = int(img_size)
         self.action_dim = int(action_dim)
+        self.frame_skip = int(frame_skip)
+        self.chunk_dim = self.action_dim * self.frame_skip
         self.action_scale = float(action_scale)
 
-        self.model = torch.load(str(ckpt_path), map_location=self.device)
+        self.model = torch.load(str(ckpt_path), map_location=self.device, weights_only=False)
         self.model.eval()
         self.model.requires_grad_(False)
 
@@ -176,29 +179,29 @@ class LeWMPolicy:
         goal = goal.expand(1, K, H, -1, -1, -1)
 
         if len(self.action_history) == 0:
-            past_act = torch.zeros(1, K, H, self.action_dim, device=self.device)
+            past_act = torch.zeros(1, K, H, self.chunk_dim, device=self.device)
         else:
-            pad = torch.zeros(self.action_dim, device=self.device)
+            pad = torch.zeros(self.chunk_dim, device=self.device)
             hist = self._pad_history(self.action_history, pad)
             past_act = torch.stack(hist, dim=0).unsqueeze(0).unsqueeze(0)
             past_act = past_act.expand(1, K, H, -1)
 
         cand = torch.randn(
-            1, K, self.planning_horizon, self.action_dim, device=self.device
+            1, K, self.planning_horizon, self.chunk_dim, device=self.device
         ) * self.action_scale
 
-        action_sequence = torch.cat([past_act, cand], dim=2)  # (1, K, T, A)
+        action_sequence = torch.cat([past_act, cand], dim=2)  # (1, K, T, chunk)
 
         info_dict = {
             "pixels": pixels,
             "goal": goal,
-            "action": torch.zeros(1, K, T, self.action_dim, device=self.device),
+            "action": torch.zeros(1, K, T, self.chunk_dim, device=self.device),
         }
         cost = self.model.get_cost(info_dict, action_sequence)  # (1, K)
         best = cost[0].argmin().item()
-        first_action = cand[0, best, 0].detach().cpu().numpy().astype(np.float32)
+        best_chunk = cand[0, best, 0].detach()  # (chunk_dim,)
 
-        self.action_history.append(
-            torch.from_numpy(first_action).to(self.device)
-        )
-        return [first_action]
+        self.action_history.append(best_chunk.clone())
+        per_step = best_chunk.view(self.frame_skip, self.action_dim)
+        return [per_step[i].cpu().numpy().astype(np.float32)
+                for i in range(self.frame_skip)]
