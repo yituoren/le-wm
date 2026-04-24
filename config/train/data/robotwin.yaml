@@ -6,9 +6,9 @@ pixel_preprocessor: none   # train.py reads this; "default" -> get_img_preproces
 
 dataset:
   _target_: robotwin_dataset.RoboTwinDataset
-  data_root: /data/robotwin_hard_pretrain
+  data_root: /cephfs/zhaorui/data/robotwin/dataset/robotwin_hard_pretrain
   num_steps: ${eval:'${wm.num_preds} + ${wm.history_size}'}
-  frameskip: 5
+  frameskip: 4
   keys_to_load:
     - pixels
     - action

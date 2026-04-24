@@ -29,13 +29,13 @@ loader:
 
 optimizer:
   type: AdamW
-  lr: 5e-5
+  lr: 3e-5
   weight_decay: 1e-3
 
 wandb:
   enabled: True
   config:
-    entity: lewm
+    entity: null
     project: lewm
     name: ${output_model_name}
     id: ${subdir}

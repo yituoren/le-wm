@@ -13,6 +13,7 @@ from omegaconf import OmegaConf, open_dict
 
 from jepa import JEPA
 from module import ARPredictor, Embedder, MLP, SIGReg
+from robotwin_dataset import _IMAGENET_MEAN, _IMAGENET_STD
 from utils import get_column_normalizer, get_img_preprocessor, ModelObjectCallBack
 
 
@@ -25,6 +26,14 @@ def lejepa_forward(self, batch, stage, cfg):
 
     # Replace NaN values with 0 (occurs at sequence boundaries)
     batch["action"] = torch.nan_to_num(batch["action"], 0.0)
+
+    # RoboTwinDataset ships pixels as uint8 (B, T, 3, H, W) to keep host
+    # RAM / IPC at 1 byte/pixel. Cast + /255 + ImageNet norm on device.
+    if batch["pixels"].dtype == torch.uint8:
+        pixels = batch["pixels"].float().div_(255.0)
+        mean = pixels.new_tensor(_IMAGENET_MEAN).view(1, 1, 3, 1, 1)
+        std = pixels.new_tensor(_IMAGENET_STD).view(1, 1, 3, 1, 1)
+        batch["pixels"] = pixels.sub_(mean).div_(std)
 
     output = self.model.encode(batch)
 
@@ -154,8 +163,22 @@ def run(cfg):
     ##       training       ##
     ##########################
 
-    run_id = cfg.get("subdir") or ""
+    run_id = str(cfg.get("subdir") or "")
     run_dir = Path(swm.data.utils.get_cache_dir(), run_id)
+    weights_ckpt = run_dir / f"{cfg.output_model_name}_weights.ckpt"
+
+    # Decide warm-start before building the wandb logger: warm-start starts a
+    # brand-new optimizer/scheduler/epoch counter, so logging into the old
+    # wandb run would collide on step numbers. Suffix the wandb id/name so
+    # warm-start always goes to a fresh run.
+    warm_start_epoch = cfg.get("warm_start_epoch", None)
+    is_warm_start = warm_start_epoch is not None and not weights_ckpt.exists()
+    if is_warm_start and cfg.wandb.enabled:
+        suffix = f"_warm{int(warm_start_epoch)}"
+        with open_dict(cfg):
+            cfg.wandb.config.id = f"{cfg.wandb.config.id}{suffix}"
+            cfg.wandb.config.name = f"{cfg.wandb.config.name}{suffix}"
+        print(f"[warm-start] wandb id/name -> {cfg.wandb.config.id}")
 
     logger = None
     if cfg.wandb.enabled:
@@ -178,11 +201,37 @@ def run(cfg):
         enable_checkpointing=True,
     )
 
+    # Cold warm-start from a per-epoch object dump when no lightning ckpt is
+    # available (e.g. the last weights.ckpt was polluted by NaN and was moved
+    # aside). Only loads weights — optimizer / scheduler / epoch restart fresh.
+    if is_warm_start:
+        warm_path = run_dir / f"{cfg.output_model_name}_epoch_{int(warm_start_epoch)}_object.ckpt"
+        if not warm_path.exists():
+            raise FileNotFoundError(f"warm-start ckpt not found: {warm_path}")
+        saved = torch.load(warm_path, map_location="cpu", weights_only=False)
+        missing, unexpected = world_model.model.load_state_dict(
+            saved.state_dict(), strict=False
+        )
+        print(f"[warm-start] loaded weights from {warm_path}")
+        if missing:
+            print(f"[warm-start] missing keys ({len(missing)}): {missing[:8]}...")
+        if unexpected:
+            print(f"[warm-start] unexpected keys ({len(unexpected)}): {unexpected[:8]}...")
+
+    # Always pass ckpt_path: spt.Manager uses it as both the save target and
+    # the resume source. Skipping it on fresh/warm-start runs means weights.ckpt
+    # never gets written. Manager handles non-existent paths gracefully.
+    if weights_ckpt.exists():
+        print(f"[resume] found {weights_ckpt}, resuming full training state")
+    else:
+        print(f"[resume] no {weights_ckpt.name}; starting "
+              f"{'warm' if warm_start_epoch is not None else 'fresh'}")
+
     manager = spt.Manager(
         trainer=trainer,
         module=world_model,
         data=data_module,
-        ckpt_path=run_dir / f"{cfg.output_model_name}_weights.ckpt",
+        ckpt_path=weights_ckpt,
     )
 
     manager()

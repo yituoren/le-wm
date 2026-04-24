@@ -10,15 +10,17 @@ Reads the per-episode preprocessed layout produced by
 
 Returns dict items shaped to match the reference oracle/train.py contract:
 
-    pixels:  (num_steps, 3, H, W) float32, ImageNet-normalized
+    pixels:  (num_steps, 3, H, W) uint8 — the float cast, /255, and
+             ImageNet normalization all happen GPU-side in ``lejepa_forward``
+             (keeps CPU/IPC memory at 1 byte/pixel instead of 4).
     action:  (num_steps, frame_skip * A) float32, raw concat across the
              frame_skip window (matches ``effective_act_dim`` in train.py)
 
 Implements the swm.data.HDF5Dataset surface that train.py touches:
-``transform`` (settable), ``get_col_data``, ``get_dim``. We do pixel
-normalization in this class (returning float32 already), so the new
-robotwin.yaml turns off the Hydra-side image preprocessor to avoid
-double-normalization. Action normalization still flows through
+``transform`` (settable), ``get_col_data``, ``get_dim``. Pixel
+normalization is performed on-device in the training loop (not here), so
+the robotwin.yaml turns off the Hydra-side image preprocessor to avoid
+double-processing. Action normalization still flows through
 ``get_column_normalizer`` -> stats are computed over the concat'd vector
 so the resulting ``mean/std`` of shape (1, frame_skip*A) broadcasts over
 per-item ``(num_steps, frame_skip*A)``.
@@ -37,12 +39,6 @@ from torch.utils.data import Dataset
 
 _IMAGENET_MEAN = (0.485, 0.456, 0.406)
 _IMAGENET_STD = (0.229, 0.224, 0.225)
-
-
-def _imagenet_norm(x: torch.Tensor) -> torch.Tensor:
-    mean = x.new_tensor(_IMAGENET_MEAN).view(-1, 1, 1)
-    std = x.new_tensor(_IMAGENET_STD).view(-1, 1, 1)
-    return (x - mean) / std
 
 
 class RoboTwinDataset(Dataset):
@@ -170,10 +166,10 @@ class RoboTwinDataset(Dataset):
 
         if "pixels" in self.keys_to_load:
             frames = self._load_frames(ep_dir)[t0:t1]                                 # (T, 3, H, W) uint8
-            # astype copies so the read-only mmap buffer doesn't trip torch's
-            # "non-writable tensor" UserWarning.
-            t = torch.from_numpy(np.ascontiguousarray(frames).astype(np.float32)).div_(255.0)
-            item["pixels"] = _imagenet_norm(t)                                         # (T, 3, H, W) float32
+            # ascontiguousarray detaches from the read-only mmap so
+            # torch.from_numpy doesn't warn. Float cast + /255 + ImageNet
+            # norm are deferred to GPU in lejepa_forward.
+            item["pixels"] = torch.from_numpy(np.ascontiguousarray(frames))           # (T, 3, H, W) uint8
 
         if "action" in self.keys_to_load:
             raw = self._load_actions_raw(ep_dir)[t0:t1]                                # (T, fs, A)

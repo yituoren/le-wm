@@ -1,0 +1,10 @@
+__pycache__/
+.venv/
+
+lewm/
+wandb/
+outputs/
+
+*.ckpt
+*.txt
+*.json
