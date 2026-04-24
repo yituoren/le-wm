@@ -37,11 +37,14 @@ trainer:
   gradient_clip_val: 1.0
 
 loader:
-  batch_size: 64
+  # Finetune splits can be tiny (1-episode ≈ 40 windows). Keep batch small
+  # and drop_last=False so every split yields ≥1 train batch.
+  batch_size: 16
   num_workers: ${num_workers}
   persistent_workers: True
   prefetch_factor: 3
   pin_memory: True
+  drop_last: False
 
 optimizer:
   type: AdamW
@@ -52,10 +55,10 @@ optimizer:
 wandb:
   enabled: True
   config:
-    entity: lewm
+    entity: null
     project: lewm
     name: ${output_model_name}_${subdir}
-    id: ${output_model_name}_${subdir}
+    id: ${output_model_name}_${subdir}_${now:%Y%m%d_%H%M%S}
     resume: allow
     log_model: False
 

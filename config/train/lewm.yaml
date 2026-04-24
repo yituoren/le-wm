@@ -38,7 +38,7 @@ wandb:
     entity: null
     project: lewm
     name: ${output_model_name}
-    id: ${subdir}
+    id: ${subdir}_${now:%Y%m%d_%H%M%S}
     resume: allow
     log_model: False
 

@@ -21,6 +21,9 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE"
 
+export FINETUNE_FROM=~/.stable_worldmodel/slow/lewm_epoch_5_object.ckpt
+export FINETUNE_ROOT=/cephfs/zhaorui/data/robotwin/dataset/robotwin_easy_finetune/
+
 : "${FINETUNE_FROM:?set FINETUNE_FROM to a pretrained lewm_epoch_N_object.ckpt}"
 : "${FINETUNE_ROOT:?set FINETUNE_ROOT to the per-task dataset root (e.g. robotwin_easy_finetune)}"
 
@@ -40,6 +43,25 @@ DEFAULT_TASKS=(
 read -r -a TASKS <<< "${TASKS:-${DEFAULT_TASKS[@]}}"
 read -r -a SPLITS <<< "${SPLITS:-1 3 10 50}"
 
+# Per-split epoch budget: tiny splits need more passes because each epoch
+# only has a handful of batches. Override via EPOCHS_<N> env var, or the
+# fallback EPOCHS_DEFAULT for any split not listed.
+EPOCHS_1="${EPOCHS_1:-90}"
+EPOCHS_3="${EPOCHS_3:-60}"
+EPOCHS_10="${EPOCHS_10:-30}"
+EPOCHS_50="${EPOCHS_50:-30}"
+EPOCHS_DEFAULT="${EPOCHS_DEFAULT:-30}"
+
+epochs_for_split() {
+    local n="$1"
+    local var="EPOCHS_${n}"
+    if [ -n "${!var:-}" ]; then
+        echo "${!var}"
+    else
+        echo "$EPOCHS_DEFAULT"
+    fi
+}
+
 export FINETUNE_FROM FINETUNE_ROOT
 
 echo "[finetune] pretrained=$FINETUNE_FROM"
@@ -57,15 +79,17 @@ for TASK in "${TASKS[@]}"; do
 
         export FT_TASK="$TASK" FT_SPLIT="$N"
         SUBDIR="ft_${TASK}_${N}ep"
+        EPOCHS="$(epochs_for_split "$N")"
         echo
         echo "================================================================"
-        echo "[finetune] task=$TASK split=$N  ->  subdir=$SUBDIR"
+        echo "[finetune] task=$TASK split=$N epochs=$EPOCHS  ->  subdir=$SUBDIR"
         echo "================================================================"
 
         CMD=(
             python train.py
             --config-name=lewm_finetune
             subdir="$SUBDIR"
+            trainer.max_epochs="$EPOCHS"
         )
         if [ "${DRY_RUN:-0}" = "1" ]; then
             echo "DRY_RUN: ${CMD[*]}"

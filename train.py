@@ -91,8 +91,13 @@ def run(cfg):
         dataset, lengths=[cfg.train_split, 1 - cfg.train_split], generator=rnd_gen
     )
 
-    train = torch.utils.data.DataLoader(train_set, **cfg.loader,shuffle=True, drop_last=True, generator=rnd_gen)
-    val = torch.utils.data.DataLoader(val_set, **cfg.loader, shuffle=False, drop_last=False)
+    # Allow overriding drop_last from cfg.loader (finetune's small splits need
+    # drop_last=False or the loader yields 0 batches). Pop it so we don't pass
+    # it twice into DataLoader.
+    loader_kwargs = dict(cfg.loader)
+    drop_last_train = bool(loader_kwargs.pop("drop_last", True))
+    train = torch.utils.data.DataLoader(train_set, **loader_kwargs, shuffle=True, drop_last=drop_last_train, generator=rnd_gen)
+    val = torch.utils.data.DataLoader(val_set, **loader_kwargs, shuffle=False, drop_last=False)
     
     ##############################
     ##       model / optim      ##
@@ -183,15 +188,16 @@ def run(cfg):
         and not weights_ckpt.exists()
         and not is_warm_start  # warm_start takes precedence if both set
     )
-    if (is_warm_start or is_finetune) and cfg.wandb.enabled:
-        suffix = (
-            f"_warm{int(warm_start_epoch)}" if is_warm_start else "_ft"
-        )
+    # warm_start restarts optimizer/epoch inside the same run_dir, so we
+    # have to force a fresh wandb id or step numbers collide. Finetune
+    # already gets a unique run_dir/subdir per (task, split), so no suffix
+    # is needed on that branch.
+    if is_warm_start and cfg.wandb.enabled:
+        suffix = f"_warm{int(warm_start_epoch)}"
         with open_dict(cfg):
             cfg.wandb.config.id = f"{cfg.wandb.config.id}{suffix}"
             cfg.wandb.config.name = f"{cfg.wandb.config.name}{suffix}"
-        tag = "warm-start" if is_warm_start else "finetune"
-        print(f"[{tag}] wandb id/name -> {cfg.wandb.config.id}")
+        print(f"[warm-start] wandb id/name -> {cfg.wandb.config.id}")
 
     logger = None
     if cfg.wandb.enabled:
