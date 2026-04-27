@@ -9,3 +9,5 @@ outputs/
 *.txt
 *.json
 *.log
+
+eval_logs/

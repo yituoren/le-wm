@@ -73,9 +73,9 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--clear-cache-freq", type=int, default=10)
     p.add_argument("--shutdown-server", action="store_true")
 
-    # MPC knobs
+    # MPC knobs (defaults mirror lewm_policy.LeWMPolicy / swm cem.yaml + adam.yaml).
+    p.add_argument("--solver", choices=("cem", "gd", "adam", "adamw"), default="cem")
     p.add_argument("--planning-horizon", type=int, default=5)
-    p.add_argument("--planning-iters", type=int, default=100)
     p.add_argument("--history-size", type=int, default=3)
     p.add_argument("--img-size", type=int, default=224)
     p.add_argument("--action-dim", type=int, default=14,
@@ -84,7 +84,17 @@ def _parse_args() -> argparse.Namespace:
                    help="Skip-chunk size the world model was trained with. "
                         "MPC operates on (frame_skip * action_dim) chunks, and "
                         "the best chunk is split into frame_skip per-step commands.")
-    p.add_argument("--action-scale", type=float, default=1.0)
+    # swm CEMSolver (config/eval/solver/cem.yaml).
+    p.add_argument("--cem-num-samples", type=int, default=300)
+    p.add_argument("--cem-topk", type=int, default=30)
+    p.add_argument("--cem-var-scale", type=float, default=1.0)
+    p.add_argument("--cem-n-steps", type=int, default=30)
+    # swm GradientSolver (config/eval/solver/adam.yaml).
+    p.add_argument("--gd-n-steps", type=int, default=30)
+    p.add_argument("--gd-num-samples", type=int, default=100)
+    p.add_argument("--gd-var-scale", type=float, default=1.0)
+    p.add_argument("--gd-lr", type=float, default=0.1)
+    p.add_argument("--gd-action-noise", type=float, default=0.0)
     return p.parse_args()
 
 
@@ -179,9 +189,19 @@ def _run_task(
           f"cam={info['head_camera_w']}x{info['head_camera_h']} ====",
           flush=True)
     print(f"[client] lewm_ckpt={ckpt_path}", flush=True)
-    print(f"[client] mpc: horizon={args.planning_horizon} iters={args.planning_iters} "
-          f"hist={args.history_size} chunk={args.frame_skip}x{args.action_dim}="
-          f"{args.frame_skip * args.action_dim} act_scale={args.action_scale}", flush=True)
+    chunk_total = args.frame_skip * args.action_dim
+    if args.solver == "cem":
+        print(f"[client] mpc: solver=cem horizon={args.planning_horizon} "
+              f"hist={args.history_size} chunk={args.frame_skip}x{args.action_dim}={chunk_total} "
+              f"samples={args.cem_num_samples} topk={args.cem_topk} "
+              f"var_scale={args.cem_var_scale} n_steps={args.cem_n_steps}",
+              flush=True)
+    else:
+        print(f"[client] mpc: solver={args.solver} horizon={args.planning_horizon} "
+              f"hist={args.history_size} chunk={args.frame_skip}x{args.action_dim}={chunk_total} "
+              f"samples={args.gd_num_samples} var_scale={args.gd_var_scale} "
+              f"n_steps={args.gd_n_steps} lr={args.gd_lr} action_noise={args.gd_action_noise}",
+              flush=True)
     if info.get("video_root"):
         print(f"[client] video_root={info['video_root']}", flush=True)
 
@@ -191,13 +211,21 @@ def _run_task(
         task_name=task_name,
         camera_key=camera_key,
         device=args.device,
+        solver=args.solver,
         planning_horizon=args.planning_horizon,
-        planning_iters=args.planning_iters,
         history_size=args.history_size,
         img_size=args.img_size,
         action_dim=args.action_dim,
         frame_skip=args.frame_skip,
-        action_scale=args.action_scale,
+        cem_num_samples=args.cem_num_samples,
+        cem_topk=args.cem_topk,
+        cem_var_scale=args.cem_var_scale,
+        cem_n_steps=args.cem_n_steps,
+        gd_n_steps=args.gd_n_steps,
+        gd_num_samples=args.gd_num_samples,
+        gd_var_scale=args.gd_var_scale,
+        gd_lr=args.gd_lr,
+        gd_action_noise=args.gd_action_noise,
     )
 
     success = 0
